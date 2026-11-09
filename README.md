@@ -20,7 +20,7 @@ ccu825-temperature-monitor/
 
 ## Быстрый старт
 
-1. Настройте секрет `API_TOKEN` в Script Properties и в POST-поле потока Automate. См. [`apps-script/README.md`](apps-script/README.md) и [схему Automate](docs/automate-flow.md).
+1. Настройте `API_TOKEN` и `SPREADSHEET_ID` в Script Properties, а `API_TOKEN` также в POST-поле потока Automate. См. [`apps-script/README.md`](apps-script/README.md) и [схему Automate](docs/automate-flow.md).
 2. В Google Apps Script установите `Code.gs` и разверните новую версию веб-приложения.
 3. Откройте папку `android/` в Android Studio, соберите и запустите приложение.
 4. В настройках приложения укажите URL `/exec`, выберите входы и задайте им нужные названия.
