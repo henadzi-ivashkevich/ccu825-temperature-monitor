@@ -11,20 +11,17 @@ Android-приложение и интеграция Google Apps Script для �
 ```text
 ccu825-temperature-monitor/
 ├── android/                  # Android Studio / Kotlin / Jetpack Compose project
-│   ├── app/
-│   ├── gradle/
-│   ├── build.gradle.kts
-│   └── settings.gradle.kts
-└── apps-script/
-    ├── README.md
-    ├── ccu-extra-columns.gs   # Дополнительные параметры из ответа CCU
-    └── temperature-history.gs # GET endpoint для приложения
+├── apps-script/
+│   ├── README.md
+│   └── Code.gs               # POST записи + GET истории
+└── docs/
+    └── automate-flow.md      # Схема блоков и передача данных/токена
 ```
 
 ## Быстрый старт
 
-1. В Google Apps Script добавьте функции из [`apps-script/`](apps-script/README.md) в проект, который уже записывает CCU825 в таблицу. Существующие `doPost(e)` и запрос CCU сохраняются.
-2. Разверните новую версию веб-приложения Apps Script и скопируйте URL `/exec`.
+1. Настройте секрет `API_TOKEN` в Script Properties и в POST-поле потока Automate. См. [`apps-script/README.md`](apps-script/README.md) и [схему Automate](docs/automate-flow.md).
+2. В Google Apps Script установите `Code.gs` и разверните новую версию веб-приложения.
 3. Откройте папку `android/` в Android Studio, соберите и запустите приложение.
 4. В настройках приложения укажите URL `/exec`, выберите входы и задайте им нужные названия.
 
@@ -65,3 +62,5 @@ APK будет создан в `android/app/build/outputs/apk/debug/app-debug.ap
 13–16. `Вход 13`–`Вход 16`
 
 Интеграция также добавляет столбцы `Выход 1`–`Выход 7`, `Заряд батареи, %`, `Состояние батареи`, `Power` и `Температура платы, °C`. Секреты и URL развернутого Apps Script не храните в репозитории.
+
+**Безопасность:** токен из текущего кода следует заменить. Новое значение не включено в этот репозиторий: оно настраивается отдельно в Script Properties и в Automate. Веб-метод истории GET в текущем `Code.gs` не проверяет токен; учитывайте это при настройке доступа.
