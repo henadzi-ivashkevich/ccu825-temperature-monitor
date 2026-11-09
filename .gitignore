@@ -1,0 +1,19 @@
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+.idea/
+*.iml
+*.apk
+*.aab
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+
+# Local credentials and deployment configuration
+.env
+.env.*
+secrets.*
+**/credentials.json
