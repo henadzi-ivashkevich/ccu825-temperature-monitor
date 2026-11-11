@@ -99,3 +99,8 @@ The app supports 16 independent CCU825 inputs:
 13–16. `Input 13`–`Input 16`
 
 Each input can be customized with custom names or hidden from the chart in Settings.
+
+## Screenshots
+
+<img width="1200" height="2670" alt="com example ccu825" src="https://github.com/user-attachments/assets/1c944e1e-07c9-42df-94af-6df04ad7c192" />
+
