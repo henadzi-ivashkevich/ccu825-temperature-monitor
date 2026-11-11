@@ -384,7 +384,7 @@ private fun TemperatureScreen() {
                         0 to trDraft("Выкл", "Off"),
                         15 to trDraft("15 минут", "15 minutes"),
                         30 to trDraft("30 минут", "30 minutes"),
-                        50 to trDraft("50 минут", "50 minutes")
+                        60 to trDraft("60 минут", "60 minutes")
                     ).forEach { (valMin, label) ->
                         FilterChip(
                             selected = draftInterval == valMin,
