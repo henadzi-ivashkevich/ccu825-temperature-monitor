@@ -2,73 +2,68 @@
 
 **Repository name:** `ccu825-temperature-monitor`
 
-**Description:** Автономное Android-приложение на Jetpack Compose для прямых запросов к контроллеру CCU825 / `ccu.sh`, визуализации температуры и датчиков, локального офлайн-хранения, фонового автоопроса и экспорта/импорта бэкапов в Google Диск.
-
-Android app for direct CCU825 controller / `ccu.sh` monitoring with local JSON offline storage, WorkManager background updates, Google Drive backup import/export, bilingual UI (Russian/English), and interactive Compose charts.
+**Description:** Autonomous Android application built with Jetpack Compose for direct polling of CCU825 controller / `ccu.sh`, temperature and sensor visualization, local offline storage, background polling via WorkManager, Google Drive backup import/export, bilingual UI (English / Russian), and interactive Compose charts.
 
 ---
 
-## 🚀 Основные возможности
+## 🚀 Key Features
 
-1. **Прямые запросы к контроллеру**:
-   - Запросы к серверу `ccu.sh` или контроллеру выполняются напрямую из приложения по кнопке или в фоне.
-   - Настройка учетных данных: URL сервера, **Логин** и **Пароль** (HTTP Basic Authentication / параметры запроса).
-2. **Локальное офлайн-хранилище (`ccu_readings.json`)**:
-   - Все замеры сохраняются локально на устройстве во внутренней памяти приложения.
-   - Автоматическое объединение новых данных и устранение дубликатов по времени.
-   - Графики и история моментально строятся локально без обязательного подключения к интернету.
-3. **Фоновый автоопрос (WorkManager)**:
-   - Настраиваемый интервал автоматического фонового обновления данных (Выкл, 15, 30, 50 минут).
-4. **Резервное копирование и импорт (Google Drive)**:
-   - Кнопки **Экспорт бэкапа** и **Импорт файла** в настройках (Storage Access Framework).
-   - Возможность импортировать файлы бэкапа или подгрузить существующую историю из Google Таблиц / Google Apps Script.
-5. **Двуязычный интерфейс (Билингвальность)**:
-   - Переключение языка интерфейса (**Русский / English**) в окне настроек.
-6. **Интерактивный график & Адаптивный дизайн**:
-   - График с кастомной отрисовкой на `Canvas`, возможностью выбора срез-точки касанием и отображением актуальных значений.
-   - Фильтры периода: **7, 15, 30 дней** или кастомный диапазон дат.
-   - Полная поддержка альбомного режима (**Landscape**) и гибкая сетка легенды.
+1. **Direct Controller Polling**:
+   - HTTP/HTTPS requests to `ccu.sh` or the CCU825 controller directly from the app (manual or scheduled).
+   - Authentication support: Server URL, **Username**, and **Password** (HTTP Basic Authentication / query parameters).
+2. **Local Offline Storage (`ccu_readings.json`)**:
+   - All measurements are stored locally in the device's app-internal storage.
+   - Automatic record merging and timestamp-based deduplication.
+   - Charts and history render instantly offline without requiring a cloud backend.
+3. **Background Polling (WorkManager)**:
+   - Configurable background data update intervals (Off, 15, 30, 60 minutes).
+4. **Backup & Import (Google Drive / SAF)**:
+   - **Export Backup** and **Import File** buttons in Settings.
+   - Ability to import previous backups or historical data exported from Google Sheets.
+5. **Bilingual UI (English / Russian)**:
+   - Interface language switching in Settings.
+6. **Interactive Charts & Adaptive Design**:
+   - Custom canvas-rendered charts with touch inspection slice, automatic axis scaling, and latest value badges.
+   - Period filters: **7, 15, 30 days** or custom date picker ranges.
+   - Full landscape mode support and responsive legend grid.
 
 ---
 
-## 📁 Структура проекта
+## 📁 Project Structure
 
 ```text
 ccu825-temperature-monitor/
 ├── android/                                    # Android Studio / Kotlin / Jetpack Compose
 │   └── app/src/main/java/com/example/ccu825/
-│       ├── MainActivity.kt                      # Главный UI экран, фильтры, график и настройки
+│       ├── MainActivity.kt                      # Main screen, filters, chart, and settings
 │       ├── data/
-│       │   ├── CcuApiClient.kt                 # Прямые HTTP-запросы к CCU825 / ccu.sh с авторизацией
-│       │   └── LocalRepository.kt              # Локальное JSON-хранилище и импорт/экспорт
+│       │   ├── CcuApiClient.kt                 # Direct HTTP polling with auth for CCU825 / ccu.sh
+│       │   └── LocalRepository.kt              # Local JSON storage & import/export
 │       └── worker/
-│           └── CcuFetchWorker.kt               # Фоновая задача WorkManager для автоопроса
-├── apps-script/
-│   ├── README.md
-│   └── Code.gs                                 # Опциональная интеграция с Google Sheets
+│           └── CcuFetchWorker.kt               # Background periodic worker via WorkManager
 └── docs/
-    └── automate-flow.md                        # Описание архивной схемы Automate
+    └── automate-flow.md                        # Historical documentation for Automate flow
 ```
 
 ---
 
-## ⚡ Быстрый старт
+## ⚡ Quick Start
 
-1. Откройте папку `android/` в Android Studio.
-2. Соберите и запустите приложение на подключенном устройстве.
-3. В приложении нажмите **«Настройки»** и укажите:
-   - **URL сервера / ccu.sh** (например, `https://ccu.sh/api/…`).
-   - **Логин** и **Пароль** контроллера (при необходимости).
-   - **Язык интерфейса** (Русский / English).
-   - **Интервал автоопроса** (Выкл, 15, 30 или 50 минут).
-4. Нажмите **«Сохранить»** и затем **«Запросить с сервера»**.
-5. Для импорта истории из старого бэкапа или Google Таблицы используйте кнопку **«Импорт файла»** в Настройках.
+1. Open the `android/` folder in Android Studio.
+2. Build and run the app on your connected Android device.
+3. Tap **Settings** and configure:
+   - **Controller / ccu.sh URL** (e.g., `https://ccu.sh/api/…`).
+   - **Username** and **Password** (if required).
+   - **Interface Language** (English / Russian).
+   - **Background Polling Interval** (Off, 15, 30, or 60 minutes).
+4. Tap **Save**, then **Fetch from server**.
+5. To import existing history from a backup file, use **Import File** in Settings.
 
 ---
 
-## 🛠️ Сборка Android
+## 🛠️ Android Build Instructions
 
-Требуется Android Studio, JDK 17 / 21 и Android SDK Platform 35.
+Requires Android Studio, JDK 17 / 21, and Android SDK Platform 35.
 
 ```bash
 cd android
@@ -82,27 +77,27 @@ cd android
 gradlew.bat assembleDebug
 ```
 
-Готовый APK файл создается по пути:
+The debug APK is generated at:
 `android/app/build/outputs/apk/debug/app-debug.apk`
 
 ---
 
-## 📊 Данные и входы CCU825
+## 📊 CCU825 Inputs
 
-Приложение поддерживает 16 независимых входов CCU825:
+The app supports 16 independent CCU825 inputs:
 
-1. `Объем`
-2. `Дымовой 2эт`
-3. `Люк УГБО`
-4. `Улица °C` *(пересчет АЦП)*
-5. `Протечка`
-6. `2 этаж °C` *(пересчет АЦП)*
-7. `Камин тепловой`
-8. `Уровень УГБО`
-9. `Гараж ворота`
-10. `Гараж вибро`
-11. `Гараж дым`
-12. `1 этаж °C` *(пересчет АЦП)*
-13–16. `Вход 13`–`Вход 16`
+1. `Volume`
+2. `Smoke 2nd fl`
+3. `Hatch UGBO`
+4. `Outdoor °C` *(ADC conversion)*
+5. `Leakage`
+6. `2nd floor °C` *(ADC conversion)*
+7. `Fireplace heat`
+8. `Level UGBO`
+9. `Garage gate`
+10. `Garage vibro`
+11. `Garage smoke`
+12. `1st floor °C` *(ADC conversion)*
+13–16. `Input 13`–`Input 16`
 
-Каждому входу в настройках можно задать собственное название или скрыть ненужные входы с графика.
+Each input can be customized with custom names or hidden from the chart in Settings.
