@@ -222,6 +222,10 @@ private fun TemperatureScreen() {
         loadFromLocal()
     }
 
+    LaunchedEffect(pollingInterval) {
+        CcuFetchWorker.scheduleOrCancel(context, pollingInterval)
+    }
+
     Scaffold(topBar = {
         TopAppBar(
             title = { Text(tr("Температура CCU825", "CCU825 Temperature")) },

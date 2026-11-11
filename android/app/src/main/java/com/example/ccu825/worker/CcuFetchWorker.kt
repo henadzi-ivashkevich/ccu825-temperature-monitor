@@ -6,6 +6,7 @@ import com.example.ccu825.data.CcuApiClient
 import com.example.ccu825.data.LocalRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
 class CcuFetchWorker(
@@ -25,8 +26,10 @@ class CcuFetchWorker(
 
         return try {
             val api = CcuApiClient()
+            val today = LocalDate.now()
+            val yesterday = today.minusDays(1)
             val fetched = withContext(Dispatchers.IO) {
-                api.fetchReadings(endpoint = endpoint, username = username, password = password)
+                api.fetchReadings(endpoint = endpoint, username = username, password = password, from = yesterday, to = today)
             }
             if (fetched.isNotEmpty()) {
                 val repository = LocalRepository(applicationContext)
