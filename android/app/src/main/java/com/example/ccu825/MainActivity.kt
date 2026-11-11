@@ -1,8 +1,12 @@
 package com.example.ccu825
 
+import android.content.res.Configuration
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -20,16 +24,17 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.example.ccu825.data.CcuApiClient
+import com.example.ccu825.data.LocalRepository
+import com.example.ccu825.worker.CcuFetchWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import org.json.JSONArray
-import java.net.HttpURLConnection
-import java.net.URL
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -37,11 +42,18 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 
-private val inputNames = listOf(
+private val inputNamesRu = listOf(
     "Объем", "Дымовой 2эт", "Люк УГБО", "Улица °C", "Протечка", "2 этаж °C",
     "Камин тепловой", "Уровень УГБО", "Гараж ворота", "Гараж вибро", "Гараж дым",
     "1 этаж °C", "Вход 13", "Вход 14", "Вход 15", "Вход 16"
 )
+
+private val inputNamesEn = listOf(
+    "Volume", "Smoke 2nd fl", "Hatch UGBO", "Outdoor °C", "Leakage", "2nd floor °C",
+    "Fireplace heat", "Level UGBO", "Garage gate", "Garage vibro", "Garage smoke",
+    "1st floor °C", "Input 13", "Input 14", "Input 15", "Input 16"
+)
+
 private val inputColors = listOf(
     0xFF1976D2, 0xFFE65100, 0xFF388E3C, 0xFF8E24AA, 0xFF00838F, 0xFFC62828,
     0xFF6D4C41, 0xFF3949AB, 0xFF7CB342, 0xFFAD1457, 0xFF5E35B1, 0xFF039BE5,
@@ -64,103 +76,361 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun TemperatureScreen() {
     val context = LocalContext.current
+    val repository = remember { LocalRepository(context) }
+    val apiClient = remember { CcuApiClient() }
     val prefs = remember { context.getSharedPreferences("ccu825", 0) }
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    var language by remember { mutableStateOf(prefs.getString("language", "ru") ?: "ru") }
+    fun tr(ru: String, en: String): String = if (language == "en") en else ru
+
     var endpoint by remember { mutableStateOf(prefs.getString("endpoint", "") ?: "") }
+    var username by remember { mutableStateOf(prefs.getString("username", "") ?: "") }
+    var password by remember { mutableStateOf(prefs.getString("password", "") ?: "") }
+    var pollingInterval by remember { mutableIntStateOf(prefs.getInt("pollingInterval", 0)) }
+
     var showSettings by remember { mutableStateOf(endpoint.isBlank()) }
     var visibleInputs by remember {
         mutableStateOf(prefs.getStringSet("visibleInputs", null)?.mapNotNull(String::toIntOrNull)?.toSet() ?: setOf(4, 6, 12))
     }
-    var names by remember {
-        mutableStateOf(inputNames.mapIndexed { index, name -> (index + 1) to (prefs.getString("inputName_${index + 1}", name) ?: name) }.toMap())
+
+    val defaultInputNames = if (language == "en") inputNamesEn else inputNamesRu
+    var names by remember(language) {
+        mutableStateOf(defaultInputNames.mapIndexed { index, defaultName ->
+            (index + 1) to (prefs.getString("inputName_${index + 1}", defaultName) ?: defaultName)
+        }.toMap())
     }
+
+    var draftLanguage by remember { mutableStateOf(language) }
     var draftEndpoint by remember { mutableStateOf(endpoint) }
+    var draftUsername by remember { mutableStateOf(username) }
+    var draftPassword by remember { mutableStateOf(password) }
+    var draftInterval by remember { mutableIntStateOf(pollingInterval) }
     var draftVisibleInputs by remember { mutableStateOf(visibleInputs) }
     var draftNames by remember { mutableStateOf(names) }
+
+    fun trDraft(ru: String, en: String): String = if (draftLanguage == "en") en else ru
+
     var from by remember { mutableStateOf(LocalDate.now().minusDays(14)) }
     var to by remember { mutableStateOf(LocalDate.now()) }
     var selectedDays by remember { mutableIntStateOf(15) }
     var readings by remember { mutableStateOf<List<Reading>>(emptyList()) }
-    var message by remember { mutableStateOf("Укажите URL веб-приложения Apps Script в настройках.") }
+    var message by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var dateTarget by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
+    fun loadFromLocal() {
+        scope.launch(Dispatchers.IO) {
+            val allReadings = repository.loadReadings()
+            val fromMillis = from.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            val toMillis = to.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+            val filtered = allReadings.filter { it.time in fromMillis..toMillis }
+            withContext(Dispatchers.Main) {
+                readings = filtered
+                message = if (filtered.isEmpty()) {
+                    if (allReadings.isEmpty()) tr("Локальных измерений нет. Нажмите «Запросить с сервера» или импортируйте файл.", "No local measurements. Tap 'Fetch from server' or import a file.")
+                    else tr("За выбранный период локальных измерений нет.", "No local measurements for selected period.")
+                } else {
+                    "${tr("Измерений", "Readings")}: ${filtered.size}"
+                }
+            }
+        }
+    }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                val success = context.contentResolver.openOutputStream(uri)?.use { stream ->
+                    repository.exportToStream(stream)
+                } ?: false
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context,
+                        if (success) tr("Бэкап успешно сохранен!", "Backup saved successfully!")
+                        else tr("Не удалось сохранить бэкап", "Failed to save backup"),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val jsonText = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    if (!jsonText.isNullOrBlank()) {
+                        val imported = repository.importReadingsJson(jsonText)
+                        withContext(Dispatchers.Main) {
+                            loadFromLocal()
+                            Toast.makeText(
+                                context,
+                                if (imported.isNotEmpty()) "${tr("Импортировано записей", "Imported records")}: ${imported.size}"
+                                else tr("Не удалось распознать измерения в файле", "Failed to recognize measurements in file"),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "${tr("Ошибка импорта", "Import error")}: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
+
     fun refresh() {
         if (endpoint.isBlank()) { showSettings = true; return }
         loading = true
-        message = "Загружаю данные…"
+        message = tr("Запрашиваю данные у контроллера…", "Fetching data from controller…")
         scope.launch {
-            runCatching { withContext(Dispatchers.IO) { loadReadings(endpoint, from, to) } }
-                .onSuccess { result -> readings = result; message = if (result.isEmpty()) "За этот период измерений нет." else "Измерений: ${result.size}" }
-                .onFailure { message = "Не удалось загрузить данные: ${it.message ?: "проверьте адрес и подключение"}" }
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val fetched = apiClient.fetchReadings(endpoint, username, password, from, to)
+                    if (fetched.isNotEmpty()) {
+                        repository.appendReadings(fetched)
+                    }
+                    fetched
+                }
+            }.onSuccess { fetched ->
+                loadFromLocal()
+                if (fetched.isEmpty()) {
+                    message = tr("Сервер не вернул новых измерений.", "Server returned no new measurements.")
+                }
+            }.onFailure { err ->
+                message = "${tr("Ошибка сети", "Network error")}: ${err.message ?: tr("проверьте адрес и учетные данные", "check address and credentials")}"
+                loadFromLocal()
+            }
             loading = false
         }
     }
 
-    LaunchedEffect(endpoint, from, to) { if (endpoint.isNotBlank()) refresh() }
+    LaunchedEffect(Unit) {
+        loadFromLocal()
+    }
+
+    LaunchedEffect(from, to) {
+        loadFromLocal()
+    }
 
     Scaffold(topBar = {
-        TopAppBar(title = { Text("Температура CCU825") }, actions = {
-            TextButton(onClick = {
-                draftEndpoint = endpoint
-                draftVisibleInputs = visibleInputs
-                draftNames = names
-                showSettings = true
-            }) { Text("Настройки") }
-        })
+        TopAppBar(
+            title = { Text(tr("Температура CCU825", "CCU825 Temperature")) },
+            actions = {
+                TextButton(onClick = {
+                    draftLanguage = language
+                    draftEndpoint = endpoint
+                    draftUsername = username
+                    draftPassword = password
+                    draftInterval = pollingInterval
+                    draftVisibleInputs = visibleInputs
+                    draftNames = names
+                    showSettings = true
+                }) { Text(tr("Настройки", "Settings")) }
+            }
+        )
     }) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+        LazyColumn(
+            Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(bottom = 24.dp)
+        ) {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(15, 30, 60).forEach { days ->
-                        FilterChip(selected = selectedDays == days, onClick = {
-                            selectedDays = days; from = LocalDate.now().minusDays((days - 1).toLong()); to = LocalDate.now()
-                        }, label = { Text("$days дней") })
+                    listOf(7, 15, 30).forEach { days ->
+                        FilterChip(
+                            selected = selectedDays == days,
+                            onClick = {
+                                selectedDays = days
+                                from = LocalDate.now().minusDays((days - 1).toLong())
+                                to = LocalDate.now()
+                            },
+                            label = { Text("$days ${tr("дней", "days")}") }
+                        )
                     }
                 }
             }
             item {
                 Card(shape = RoundedCornerShape(16.dp)) {
-                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Период", fontWeight = FontWeight.SemiBold)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedButton(onClick = { dateTarget = "from" }) { Text(from.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))) }
-                            Text("—")
-                            OutlinedButton(onClick = { dateTarget = "to" }) { Text(to.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))) }
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(tr("Период", "Period"), fontWeight = FontWeight.SemiBold)
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.Start),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { dateTarget = "from" },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(from.format(DateTimeFormatter.ofPattern("dd.MM.yyyy")), style = MaterialTheme.typography.bodyMedium)
+                            }
+                            Text("—", fontWeight = FontWeight.SemiBold)
+                            OutlinedButton(
+                                onClick = { dateTarget = "to" },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(to.format(DateTimeFormatter.ofPattern("dd.MM.yyyy")), style = MaterialTheme.typography.bodyMedium)
+                            }
                         }
                     }
                 }
             }
-            item { TemperatureChart(readings, chartSeries(visibleInputs, names)) }
+            item { TemperatureChart(readings, chartSeries(visibleInputs, names, defaultInputNames), language) }
             item { Text(message, style = MaterialTheme.typography.bodyMedium) }
             item {
+                val legendColumns = if (isLandscape) 4 else 2
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    chartSeries(visibleInputs, names).chunked(2).forEach { row -> Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    row.forEach { item -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Canvas(Modifier.size(10.dp)) { drawCircle(item.color) }
-                        Text("${item.input}. ${item.title}", style = MaterialTheme.typography.labelMedium)
-                    } }
-                    } }
+                    chartSeries(visibleInputs, names, defaultInputNames).chunked(legendColumns).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            row.forEach { item ->
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    Canvas(Modifier.size(10.dp)) { drawCircle(item.color) }
+                                    Text("${item.input}. ${item.title}", style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            item { Button(onClick = { refresh() }, enabled = !loading, modifier = Modifier.fillMaxWidth()) { Text(if (loading) "Загрузка…" else "Обновить") } }
+            item {
+                Button(
+                    onClick = { refresh() },
+                    enabled = !loading,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (loading) tr("Загрузка…", "Loading…") else tr("Запросить с сервера", "Fetch from server"))
+                }
+            }
         }
     }
 
     if (showSettings) AlertDialog(
         onDismissRequest = { if (endpoint.isNotBlank()) showSettings = false },
-        title = { Text("Настройки графика") },
+        title = { Text(tr("Настройки подключения и графика", "Connection & Chart Settings")) },
         text = {
-            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("URL развернутого веб-приложения Apps Script", style = MaterialTheme.typography.labelLarge)
-                OutlinedTextField(value = draftEndpoint, onValueChange = { draftEndpoint = it }, singleLine = true, placeholder = { Text("https://script.google.com/macros/s/…/exec") })
-                Text("Выберите входы для графика и при необходимости задайте свои названия.", style = MaterialTheme.typography.bodyMedium)
-                inputNames.forEachIndexed { index, defaultName ->
+            val maxDialogHeight = if (isLandscape) 280.dp else 560.dp
+            Column(
+                Modifier.heightIn(max = maxDialogHeight).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(trDraft("Язык интерфейса", "Interface Language"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = draftLanguage == "ru",
+                        onClick = {
+                            draftLanguage = "ru"
+                            draftNames = inputNamesRu.mapIndexed { i, dName -> (i + 1) to (prefs.getString("inputName_${i + 1}", dName) ?: dName) }.toMap()
+                        },
+                        label = { Text("Русский") }
+                    )
+                    FilterChip(
+                        selected = draftLanguage == "en",
+                        onClick = {
+                            draftLanguage = "en"
+                            draftNames = inputNamesEn.mapIndexed { i, dName -> (i + 1) to (prefs.getString("inputName_${i + 1}", dName) ?: dName) }.toMap()
+                        },
+                        label = { Text("English") }
+                    )
+                }
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+
+                Text(trDraft("Подключение к контроллеру / ccu.sh", "Controller / ccu.sh Connection"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(
+                    value = draftEndpoint,
+                    onValueChange = { draftEndpoint = it },
+                    singleLine = true,
+                    label = { Text(trDraft("URL контроллера / ccu.sh", "Controller / ccu.sh URL")) },
+                    placeholder = { Text("https://ccu.sh/api/…") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = draftUsername,
+                        onValueChange = { draftUsername = it },
+                        singleLine = true,
+                        label = { Text(trDraft("Логин", "Username")) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = draftPassword,
+                        onValueChange = { draftPassword = it },
+                        singleLine = true,
+                        label = { Text(trDraft("Пароль", "Password")) },
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+
+                Text(trDraft("Фоновый автоопрос (WorkManager)", "Background Polling (WorkManager)"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(trDraft("Интервал обновления локальных данных в фоне:", "Background local update interval:"), style = MaterialTheme.typography.bodySmall)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(
+                        0 to trDraft("Выкл", "Off"),
+                        15 to trDraft("15 минут", "15 minutes"),
+                        30 to trDraft("30 минут", "30 minutes"),
+                        50 to trDraft("50 минут", "50 minutes")
+                    ).forEach { (valMin, label) ->
+                        FilterChip(
+                            selected = draftInterval == valMin,
+                            onClick = { draftInterval = valMin },
+                            label = { Text(label) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+
+                Text(trDraft("Резервное копирование и импорт", "Backup & Import"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = {
+                            importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(trDraft("Импорт файла", "Import File"))
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val defaultName = "ccu_backup_${LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy_MM_dd"))}.json"
+                            exportLauncher.launch(defaultName)
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(trDraft("Экспорт бэкапа", "Export Backup"))
+                    }
+                }
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+
+                Text(trDraft("Отображаемые входы и названия", "Visible Inputs & Names"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                val draftDefaultInputNames = if (draftLanguage == "en") inputNamesEn else inputNamesRu
+                draftDefaultInputNames.forEachIndexed { index, defaultName ->
                     val input = index + 1
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Checkbox(checked = input in draftVisibleInputs, onCheckedChange = { checked ->
-                            draftVisibleInputs = if (checked) draftVisibleInputs + input else draftVisibleInputs - input
-                        })
+                        Checkbox(
+                            checked = input in draftVisibleInputs,
+                            onCheckedChange = { checked ->
+                                draftVisibleInputs = if (checked) draftVisibleInputs + input else draftVisibleInputs - input
+                            }
+                        )
                         Text("$input", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(26.dp))
                         OutlinedTextField(
                             value = draftNames[input] ?: defaultName,
@@ -173,48 +443,87 @@ private fun TemperatureScreen() {
                 }
             }
         },
-        confirmButton = { TextButton(onClick = {
-            endpoint = draftEndpoint.trim()
-            visibleInputs = draftVisibleInputs
-            names = draftNames.mapValues { (input, label) -> label.trim().ifEmpty { inputNames[input - 1] } }
-            prefs.edit().putString("endpoint", endpoint).apply()
-            prefs.edit().putStringSet("visibleInputs", visibleInputs.map(Int::toString).toSet()).apply()
-            names.forEach { (input, label) -> prefs.edit().putString("inputName_$input", label).apply() }
-            showSettings = false
-            refresh()
-        }) { Text("Сохранить") } },
-        dismissButton = { if (endpoint.isNotBlank()) TextButton(onClick = { showSettings = false }) { Text("Отмена") } }
+        confirmButton = {
+            TextButton(onClick = {
+                language = draftLanguage
+                endpoint = draftEndpoint.trim()
+                username = draftUsername.trim()
+                password = draftPassword.trim()
+                pollingInterval = draftInterval
+                visibleInputs = draftVisibleInputs
+                names = draftNames.mapValues { (input, label) ->
+                    val defNames = if (language == "en") inputNamesEn else inputNamesRu
+                    label.trim().ifEmpty { defNames[input - 1] }
+                }
+
+                prefs.edit()
+                    .putString("language", language)
+                    .putString("endpoint", endpoint)
+                    .putString("username", username)
+                    .putString("password", password)
+                    .putInt("pollingInterval", pollingInterval)
+                    .putStringSet("visibleInputs", visibleInputs.map(Int::toString).toSet())
+                    .apply()
+
+                names.forEach { (input, label) -> prefs.edit().putString("inputName_$input", label).apply() }
+
+                CcuFetchWorker.scheduleOrCancel(context, pollingInterval)
+
+                showSettings = false
+                refresh()
+            }) { Text(trDraft("Сохранить", "Save")) }
+        },
+        dismissButton = {
+            if (endpoint.isNotBlank()) {
+                TextButton(onClick = { showSettings = false }) { Text(trDraft("Отмена", "Cancel")) }
+            }
+        }
     )
 
     dateTarget?.let { target ->
         val initial = if (target == "from") from else to
         val picker = rememberDatePickerState(initialSelectedDateMillis = initial.atStartOfDay(ZoneId.of("UTC")).toInstant().toEpochMilli())
-        DatePickerDialog(onDismissRequest = { dateTarget = null }, confirmButton = {
-            TextButton(onClick = {
-                picker.selectedDateMillis?.let { millis ->
-                    val date = Instant.ofEpochMilli(millis).atZone(ZoneId.of("UTC")).toLocalDate()
-                    if (target == "from") from = date else to = date
-                    selectedDays = 0
-                }
-                dateTarget = null
-            }) { Text("Готово") }
-        }, dismissButton = { TextButton(onClick = { dateTarget = null }) { Text("Отмена") } }) { DatePicker(state = picker) }
+        DatePickerDialog(
+            onDismissRequest = { dateTarget = null },
+            confirmButton = {
+                TextButton(onClick = {
+                    picker.selectedDateMillis?.let { millis ->
+                        val date = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
+                        if (target == "from") from = date else to = date
+                        selectedDays = 0
+                    }
+                    dateTarget = null
+                }) { Text(tr("Готово", "Done")) }
+            },
+            dismissButton = { TextButton(onClick = { dateTarget = null }) { Text(tr("Отмена", "Cancel")) } }
+        ) { DatePicker(state = picker) }
     }
 }
 
 @Composable
-private fun TemperatureChart(readings: List<Reading>, series: List<TemperatureSeries>) {
+private fun TemperatureChart(readings: List<Reading>, series: List<TemperatureSeries>, language: String) {
     var selectedIndex by remember(readings) { mutableStateOf<Int?>(null) }
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val baseHeight = if (isLandscape) 220 else 300
+    val extraHeight = (series.size - 4).coerceAtLeast(0) * (if (isLandscape) 10 else 18)
+    val chartHeight = (baseHeight + extraHeight).dp
+
+    fun tr(ru: String, en: String): String = if (language == "en") en else ru
+
     Card(shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Text("График показаний", fontWeight = FontWeight.SemiBold)
+            Text(tr("График показаний", "Readings Chart"), fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(8.dp))
             if (readings.isEmpty() || series.isEmpty()) {
                 Box(Modifier.fillMaxWidth().height(250.dp), contentAlignment = Alignment.Center) {
-                    Text(if (series.isEmpty()) "В настройках выберите входы для графика" else "Нет данных для графика")
+                    Text(
+                        if (series.isEmpty()) tr("В настройках выберите входы для графика", "Select chart inputs in Settings")
+                        else tr("Нет данных для графика", "No chart data available")
+                    )
                 }
             } else {
-                Canvas(Modifier.fillMaxWidth().height((300 + (series.size - 4).coerceAtLeast(0) * 18).dp).pointerInput(readings) {
+                Canvas(Modifier.fillMaxWidth().height(chartHeight).pointerInput(readings) {
                     awaitEachGesture {
                         val graphLeft = 58.dp.toPx()
                         val graphRight = size.width - 72.dp.toPx()
@@ -255,7 +564,7 @@ private fun TemperatureChart(readings: List<Reading>, series: List<TemperatureSe
                         color = android.graphics.Color.DKGRAY
                         textSize = 12f * density
                     }
-                    val unit = if (series.all { it.input in setOf(4, 6, 12) }) "°C" else "Значение"
+                    val unit = if (series.all { it.input in setOf(4, 6, 12) }) "°C" else tr("Значение", "Value")
                     drawContext.canvas.nativeCanvas.drawText(unit, 2f, 15f * density, tempPaint)
                     repeat(5) { i ->
                         val y = top + (bottom - top) * i / 4f
@@ -304,7 +613,6 @@ private fun TemperatureChart(readings: List<Reading>, series: List<TemperatureSe
                         }
                     }
 
-                    // Right-side labels show the latest available value for each sensor.
                     val latest = series.mapNotNull { item ->
                         readings.asReversed().firstNotNullOfOrNull { row ->
                             row.value(item.input)?.let { value ->
@@ -347,7 +655,7 @@ private fun TemperatureChart(readings: List<Reading>, series: List<TemperatureSe
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
-                            "Срез: ${Instant.ofEpochMilli(row.time).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss"))}",
+                            "${tr("Срез:", "Slice:")} ${Instant.ofEpochMilli(row.time).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss"))}",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -364,52 +672,5 @@ private fun TemperatureChart(readings: List<Reading>, series: List<TemperatureSe
     }
 }
 
-private fun chartSeries(enabledInputs: Set<Int>, names: Map<Int, String>): List<TemperatureSeries> =
-    enabledInputs.sorted().map { input -> TemperatureSeries(input, names[input].orEmpty().ifBlank { inputNames[input - 1] }, inputColors[input - 1]) }
-
-private fun loadReadings(endpoint: String, from: LocalDate, to: LocalDate): List<Reading> {
-    val separator = if (endpoint.contains('?')) '&' else '?'
-    val url = URL("$endpoint${separator}action=history&from=$from&to=$to")
-    val connection = (url.openConnection() as HttpURLConnection).apply { requestMethod = "GET"; connectTimeout = 20_000; readTimeout = 30_000 }
-    try {
-        val body = (if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream).bufferedReader().use { it.readText() }
-        if (connection.responseCode !in 200..299) error("HTTP ${connection.responseCode}")
-        val root = JSONObject(body)
-        if (!root.optBoolean("ok", false)) error(root.optString("error", "ошибка Apps Script"))
-        val rows = root.getJSONArray("readings")
-        return (0 until rows.length()).map { i ->
-            val row = rows.getJSONObject(i)
-            val inputValues = row.optJSONArray("inputs")
-            val values = if (inputValues != null) {
-                (0 until 16).map { inputValues.optNullableDouble(it) }
-            } else {
-                // Compatibility with the earlier three-temperature response.
-                MutableList<Double?>(16) { null }.apply {
-                    set(3, row.optNullableDouble("outside"))
-                    set(5, row.optNullableDouble("floor2"))
-                    set(11, row.optNullableDouble("floor1"))
-                }
-            }
-            Reading(row.getLong("time"), values)
-        }.sortedBy { it.time }
-    } finally { connection.disconnect() }
-}
-
-private fun JSONObject.optNullableDouble(name: String): Double? = if (isNull(name) || !has(name)) null else optDouble(name).takeIf { it.isFinite() }
-
-private fun JSONArray.optNullableDouble(index: Int): Double? {
-    val value = opt(index)
-    return when (value) {
-        null, JSONObject.NULL -> null
-        is Number -> value.toDouble().takeIf { it.isFinite() }
-        is Boolean -> if (value) 1.0 else 0.0
-        else -> {
-            val text = value.toString().trim()
-            when {
-                text.equals("true", ignoreCase = true) || text.equals("on", ignoreCase = true) -> 1.0
-                text.equals("false", ignoreCase = true) || text.equals("off", ignoreCase = true) -> 0.0
-                else -> text.replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() }
-            }
-        }
-    }
-}
+private fun chartSeries(enabledInputs: Set<Int>, names: Map<Int, String>, defaultNames: List<String>): List<TemperatureSeries> =
+    enabledInputs.sorted().map { input -> TemperatureSeries(input, names[input].orEmpty().ifBlank { defaultNames[input - 1] }, inputColors[input - 1]) }
