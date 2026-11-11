@@ -23,6 +23,27 @@ android {
     kotlinOptions { jvmTarget = "17" }
 
     buildFeatures { compose = true }
+
+    tasks.matching { it.name == "assembleDebug" || it.name == "assembleRelease" }.configureEach {
+        doLast {
+            val debugDir = file("$buildDir/outputs/apk/debug")
+            if (debugDir.exists()) {
+                debugDir.listFiles()?.forEach { f ->
+                    if (f.name.endsWith(".apk") && !f.name.startsWith("ccu825_temp")) {
+                        f.renameTo(File(debugDir, "ccu825_temp_debug.apk"))
+                    }
+                }
+            }
+            val releaseDir = file("$buildDir/outputs/apk/release")
+            if (releaseDir.exists()) {
+                releaseDir.listFiles()?.forEach { f ->
+                    if (f.name.endsWith(".apk") && !f.name.startsWith("ccu825_temp")) {
+                        f.renameTo(File(releaseDir, "ccu825_temp.apk"))
+                    }
+                }
+            }
+        }
+    }
 }
 
 dependencies {
