@@ -445,6 +445,21 @@ private fun TemperatureScreen() {
                         )
                     }
                 }
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+
+                val versionName = try {
+                    context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0.1"
+                } catch (e: Exception) {
+                    "1.0.1"
+                }
+                Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        "${trDraft("Версия", "Version")} $versionName",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         },
         confirmButton = {
