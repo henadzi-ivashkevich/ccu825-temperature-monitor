@@ -41,8 +41,6 @@ ccu825-temperature-monitor/
 │       │   └── LocalRepository.kt              # Local JSON storage & import/export
 │       └── worker/
 │           └── CcuFetchWorker.kt               # Background periodic worker via WorkManager
-└── docs/
-    └── automate-flow.md                        # Historical documentation for Automate flow
 ```
 
 ---
